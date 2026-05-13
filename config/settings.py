@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always resolve .env relative to the repo root (parent of this file's package)
+_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_ROOT / ".env")
 
 
 def _require(key: str) -> str:

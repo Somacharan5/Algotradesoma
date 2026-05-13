@@ -5,7 +5,6 @@ from typing import Any
 from loguru import logger
 from SmartApi import SmartConnect
 from broker.auth import login, refresh_session
-from config import settings
 
 
 @dataclass
@@ -37,6 +36,9 @@ class AngelBroker:
 
     def get_profile(self) -> dict:
         return self._call(self.session.getProfile, self.session.refresh_token)
+
+    def get_refresh_token(self) -> str:
+        return getattr(self.session, "refresh_token", "")
 
     def get_holdings(self) -> list[dict]:
         data = self._call(self.session.holding)
