@@ -5,35 +5,49 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  SSH_OPTS: -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o BatchMode=yes
-
 jobs:
   deploy:
     name: SSH deploy → Oracle VM
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    env:
+      VM_HOST: ${{ secrets.ORACLE_HOST }}
+      VM_USER: ${{ secrets.ORACLE_USER }}
+      VM_KEY:  ${{ secrets.ORACLE_SSH_KEY }}
+      SSH:     "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/oracle.pem"
+
     steps:
-      # ── 1. Write SSH key ───────────────────────────────────────────────
+      # ── 1. Validate secrets are set ────────────────────────────────────
+      - name: Validate secrets
+        run: |
+          missing=()
+          [ -z "$VM_HOST" ] && missing+=("ORACLE_HOST")
+          [ -z "$VM_USER" ] && missing+=("ORACLE_USER")
+          [ -z "$VM_KEY"  ] && missing+=("ORACLE_SSH_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ERROR: Missing GitHub secrets: ${missing[*]}"
+            echo "Go to: https://github.com/Somacharan5/Algotradesoma/settings/secrets/actions"
+            exit 1
+          fi
+          echo "All secrets present: VM_HOST=$VM_HOST  VM_USER=$VM_USER"
+
+      # ── 2. Write SSH key ───────────────────────────────────────────────
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle.pem
+          printf '%s\n' "$VM_KEY" > ~/.ssh/oracle.pem
           chmod 600 ~/.ssh/oracle.pem
 
-      # ── 2. Verify SSH connection ───────────────────────────────────────
+      # ── 3. Verify SSH connection ───────────────────────────────────────
       - name: Verify SSH connection
         run: |
-          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
-            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} \
-            "echo 'SSH OK — hostname:' && hostname"
+          $SSH $VM_USER@$VM_HOST "echo 'SSH OK — hostname:' && hostname"
 
-      # ── 3. Bootstrap VM on first deploy ───────────────────────────────
+      # ── 4. Bootstrap VM on first deploy ───────────────────────────────
       - name: Bootstrap VM (if needed)
         run: |
-          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
-            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} << 'ENDSSH'
+          $SSH $VM_USER@$VM_HOST << 'ENDSSH'
           set -euo pipefail
           APP_DIR=/home/ubuntu/trading-agent
 
@@ -52,15 +66,14 @@ jobs:
             sudo cp "$APP_DIR/deploy/logrotate.conf" /etc/logrotate.d/trading-agent
             echo "=== Bootstrap complete ==="
           else
-            echo "=== VM already bootstrapped — skipping ==="
+            echo "=== VM already bootstrapped ==="
           fi
           ENDSSH
 
-      # ── 4. Pull + install + restart ────────────────────────────────────
+      # ── 5. Pull + install + restart ────────────────────────────────────
       - name: Deploy latest code
         run: |
-          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
-            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} << 'ENDSSH'
+          $SSH $VM_USER@$VM_HOST << 'ENDSSH'
           set -euo pipefail
           APP_DIR=/home/ubuntu/trading-agent
           VENV=$APP_DIR/.venv
@@ -72,8 +85,13 @@ jobs:
           $VENV/bin/pip install -r requirements.txt -q
 
           if [ ! -f "$APP_DIR/.env" ]; then
-            echo "WARNING: $APP_DIR/.env not found — skipping service start"
-            echo "SSH into VM and run: nano $APP_DIR/.env"
+            echo ""
+            echo "=========================================="
+            echo "  ACTION NEEDED: .env not found on VM"
+            echo "  SSH in and run:"
+            echo "    nano $APP_DIR/.env"
+            echo "  Then re-run this workflow."
+            echo "=========================================="
             exit 0
           fi
 
@@ -83,27 +101,27 @@ jobs:
           if systemctl is-active --quiet trading-agent; then
             echo "=== Service is UP ==="
           else
-            echo "=== Service FAILED — last 20 log lines ==="
-            journalctl -u trading-agent --no-pager -n 20
+            echo "=== Service FAILED — last 30 log lines ==="
+            journalctl -u trading-agent --no-pager -n 30
             exit 1
           fi
           ENDSSH
 
-      # ── 5. Notify result ───────────────────────────────────────────────
+      # ── 6. Notify result ───────────────────────────────────────────────
       - name: Notify success
         if: success()
         run: |
           curl -s -X POST \
             "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode="HTML" \
-            -d text="✅ <b>Deploy successful</b>%0ACommit: <code>${{ github.sha }}</code>"
+            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=✅ Deploy successful — commit ${{ github.sha }}"
 
       - name: Notify failure
         if: failure()
         run: |
           curl -s -X POST \
             "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d parse_mode="HTML" \
-            -d text="❌ <b>Deploy FAILED</b>%0ACommit: <code>${{ github.sha }}</code>%0ASee: https://github.com/Somacharan5/Algotradesoma/actions"
+            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=❌ Deploy FAILED — commit ${{ github.sha }} — https://github.com/Somacharan5/Algotradesoma/actions"
