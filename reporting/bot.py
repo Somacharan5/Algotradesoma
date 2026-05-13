@@ -145,6 +145,7 @@ async def run_bot() -> None:
     """
     Start long-polling in the background.
     Called by the Day 9 orchestrator as an asyncio task.
+    Handles CancelledError by properly stopping the PTB Application.
     """
     if not settings.TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN not set — bot disabled.")
@@ -152,10 +153,16 @@ async def run_bot() -> None:
 
     app = build_app()
     logger.info("Telegram bot starting (long-poll)…")
-    async with app:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        logger.info("Telegram bot polling active.")
-        # Keep alive — orchestrator will cancel this task on shutdown
-        await asyncio.Event().wait()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("Telegram bot polling active.")
+    try:
+        await asyncio.Event().wait()   # keep alive until cancelled
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        logger.info("Telegram bot stopped.")
