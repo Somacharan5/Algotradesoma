@@ -1,0 +1,13 @@
+.env
+.env.local
+*.pyc
+__pycache__/
+.venv/
+venv/
+.DS_Store
+logs/*.log
+*.db
+*.sqlite
+.claude/
+.idea/
+.vscode/
