@@ -1,0 +1,29 @@
+[Unit]
+Description=Autonomous Trading Agent
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trading-agent
+ExecStart=/home/ubuntu/trading-agent/.venv/bin/python main.py
+Restart=always
+RestartSec=15s
+
+# Environment
+EnvironmentFile=/home/ubuntu/trading-agent/.env
+
+# Logging (captured by systemd-journald; loguru also writes to logs/)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-agent
+
+# Resource limits (Oracle free tier is tight)
+MemoryMax=512M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target
