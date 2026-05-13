@@ -5,37 +5,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  SSH_OPTS: -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o BatchMode=yes
+
 jobs:
   deploy:
     name: SSH deploy → Oracle VM
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
-      # ── 1. Write SSH key to file ───────────────────────────────────────
+      # ── 1. Write SSH key ───────────────────────────────────────────────
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle.pem
+          printf '%s\n' "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle.pem
           chmod 600 ~/.ssh/oracle.pem
-          # Disable strict host checking so first-time connect doesn't hang
-          cat >> ~/.ssh/config <<EOF
-          Host oracle-vm
-            HostName ${{ secrets.ORACLE_HOST }}
-            User ${{ secrets.ORACLE_USER }}
-            IdentityFile ~/.ssh/oracle.pem
-            StrictHostKeyChecking no
-            ConnectTimeout 30
-          EOF
 
       # ── 2. Verify SSH connection ───────────────────────────────────────
       - name: Verify SSH connection
-        run: ssh oracle-vm "echo 'SSH OK — hostname:' && hostname"
+        run: |
+          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
+            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} \
+            "echo 'SSH OK — hostname:' && hostname"
 
-      # ── 3. Bootstrap VM if first deploy ───────────────────────────────
+      # ── 3. Bootstrap VM on first deploy ───────────────────────────────
       - name: Bootstrap VM (if needed)
         run: |
-          ssh oracle-vm bash <<'ENDSSH'
+          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
+            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} << 'ENDSSH'
           set -euo pipefail
           APP_DIR=/home/ubuntu/trading-agent
 
@@ -53,16 +51,16 @@ jobs:
             sudo systemctl enable trading-agent
             sudo cp "$APP_DIR/deploy/logrotate.conf" /etc/logrotate.d/trading-agent
             echo "=== Bootstrap complete ==="
-            echo "ACTION NEEDED: copy your .env to $APP_DIR/.env then re-run this workflow"
           else
-            echo "=== VM already bootstrapped ==="
+            echo "=== VM already bootstrapped — skipping ==="
           fi
           ENDSSH
 
-      # ── 4. Deploy: pull + install + restart ───────────────────────────
+      # ── 4. Pull + install + restart ────────────────────────────────────
       - name: Deploy latest code
         run: |
-          ssh oracle-vm bash <<'ENDSSH'
+          ssh $SSH_OPTS -i ~/.ssh/oracle.pem \
+            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} << 'ENDSSH'
           set -euo pipefail
           APP_DIR=/home/ubuntu/trading-agent
           VENV=$APP_DIR/.venv
@@ -73,21 +71,26 @@ jobs:
           echo "=== Update dependencies ==="
           $VENV/bin/pip install -r requirements.txt -q
 
-          # Only restart if .env exists (credentials have been set)
           if [ ! -f "$APP_DIR/.env" ]; then
-            echo "WARNING: .env not found — skipping service start"
-            echo "Copy your .env to $APP_DIR/.env and re-run this workflow"
+            echo "WARNING: $APP_DIR/.env not found — skipping service start"
+            echo "SSH into VM and run: nano $APP_DIR/.env"
             exit 0
           fi
 
           echo "=== Restart service ==="
           sudo systemctl restart trading-agent
           sleep 6
-          systemctl is-active trading-agent && echo "=== Service is UP ===" || (echo "=== Service FAILED ==="; journalctl -u trading-agent --no-pager -n 20; exit 1)
+          if systemctl is-active --quiet trading-agent; then
+            echo "=== Service is UP ==="
+          else
+            echo "=== Service FAILED — last 20 log lines ==="
+            journalctl -u trading-agent --no-pager -n 20
+            exit 1
+          fi
           ENDSSH
 
       # ── 5. Notify result ───────────────────────────────────────────────
-      - name: Notify Telegram on success
+      - name: Notify success
         if: success()
         run: |
           curl -s -X POST \
@@ -96,7 +99,7 @@ jobs:
             -d parse_mode="HTML" \
             -d text="✅ <b>Deploy successful</b>%0ACommit: <code>${{ github.sha }}</code>"
 
-      - name: Notify Telegram on failure
+      - name: Notify failure
         if: failure()
         run: |
           curl -s -X POST \
