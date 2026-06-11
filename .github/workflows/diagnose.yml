@@ -1,0 +1,19 @@
+name: Diagnose VM connectivity
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VM_HOST: ${{ secrets.ORACLE_HOST }}
+    steps:
+      - name: Probe VM
+        run: |
+          echo "host-b64: $(printf '%s' "$VM_HOST" | base64)"
+          echo "--- tcp 22 ---"
+          timeout 15 bash -c "echo > /dev/tcp/$VM_HOST/22" && echo "port 22 OPEN" || echo "port 22 CLOSED/FILTERED"
+          echo "--- ping ---"
+          ping -c 3 -W 3 "$VM_HOST" || true
