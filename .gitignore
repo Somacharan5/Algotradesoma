@@ -5,7 +5,8 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
-logs/*.log
+logs/*
+!logs/.gitkeep
 *.db
 *.sqlite
 .claude/
