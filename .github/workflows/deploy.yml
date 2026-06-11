@@ -16,6 +16,7 @@ jobs:
       VM_USER: ${{ secrets.ORACLE_USER }}
       VM_KEY:  ${{ secrets.ORACLE_SSH_KEY }}
       SSH:     "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/oracle.pem"
+      APP_DIR: /home/ubuntu/trading-agent
 
     steps:
       # ── 1. Validate secrets are set ────────────────────────────────────
@@ -30,59 +31,71 @@ jobs:
             echo "Go to: https://github.com/Somacharan5/Algotradesoma/settings/secrets/actions"
             exit 1
           fi
-          echo "All secrets present: VM_HOST=$VM_HOST  VM_USER=$VM_USER"
+          case "$VM_HOST" in
+            10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*)
+              echo "ERROR: ORACLE_HOST is a PRIVATE IP ($VM_HOST) — GitHub cannot reach it."
+              echo "Set it to the VM's PUBLIC IP (Oracle console → Compute → Instances)."
+              exit 1
+              ;;
+          esac
+          echo "Secrets present: VM_HOST=$VM_HOST  VM_USER=$VM_USER"
 
-      # ── 2. Write SSH key ───────────────────────────────────────────────
+      # ── 2. Check out code ──────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 3. Write SSH key ───────────────────────────────────────────────
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$VM_KEY" > ~/.ssh/oracle.pem
           chmod 600 ~/.ssh/oracle.pem
 
-      # ── 3. Verify SSH connection ───────────────────────────────────────
+      # ── 4. Verify SSH connection ───────────────────────────────────────
       - name: Verify SSH connection
         run: |
           $SSH $VM_USER@$VM_HOST "echo 'SSH OK — hostname:' && hostname"
 
-      # ── 4. Bootstrap VM on first deploy ───────────────────────────────
-      - name: Bootstrap VM (if needed)
+      # ── 5. Sync code to VM ────────────────────────────────────────────
+      # The repo is private, so the VM never talks to GitHub: the runner
+      # checks the code out and rsyncs it over. .env, logs and data on
+      # the VM are left untouched.
+      - name: Sync code
         run: |
-          $SSH $VM_USER@$VM_HOST << 'ENDSSH'
-          set -euo pipefail
-          APP_DIR=/home/ubuntu/trading-agent
+          $SSH $VM_USER@$VM_HOST "mkdir -p $APP_DIR"
+          rsync -az --delete \
+            -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i ~/.ssh/oracle.pem" \
+            --exclude '.git' --exclude '.env' --exclude '.venv' \
+            --exclude 'logs/' --exclude 'data/' --exclude '__pycache__' \
+            ./ $VM_USER@$VM_HOST:$APP_DIR/
 
-          if [ ! -d "$APP_DIR/.git" ]; then
-            echo "=== First deploy: bootstrapping VM ==="
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq python3.12 python3.12-venv python3.12-dev git libpq-dev build-essential
-            git clone https://github.com/Somacharan5/Algotradesoma.git "$APP_DIR"
-            python3.12 -m venv "$APP_DIR/.venv"
-            "$APP_DIR/.venv/bin/pip" install --upgrade pip -q
-            "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
-            mkdir -p "$APP_DIR/logs"
-            sudo cp "$APP_DIR/deploy/trading-agent.service" /etc/systemd/system/trading-agent.service
-            sudo systemctl daemon-reload
-            sudo systemctl enable trading-agent
-            sudo cp "$APP_DIR/deploy/logrotate.conf" /etc/logrotate.d/trading-agent
-            echo "=== Bootstrap complete ==="
-          else
-            echo "=== VM already bootstrapped ==="
-          fi
-          ENDSSH
-
-      # ── 5. Pull + install + restart ────────────────────────────────────
-      - name: Deploy latest code
+      # ── 6. Install + restart ───────────────────────────────────────────
+      - name: Install and restart service
         run: |
           $SSH $VM_USER@$VM_HOST << 'ENDSSH'
           set -euo pipefail
           APP_DIR=/home/ubuntu/trading-agent
           VENV=$APP_DIR/.venv
 
-          echo "=== Pull latest code ==="
-          cd $APP_DIR && git pull origin main
+          if ! dpkg -s python3-venv >/dev/null 2>&1; then
+            echo "=== First deploy: installing system packages ==="
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq python3-venv python3-dev libpq-dev build-essential
+          fi
+
+          if [ ! -d "$VENV" ]; then
+            python3 -m venv "$VENV"
+            "$VENV/bin/pip" install --upgrade pip -q
+          fi
 
           echo "=== Update dependencies ==="
-          $VENV/bin/pip install -r requirements.txt -q
+          "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" -q
+          mkdir -p "$APP_DIR/logs" "$APP_DIR/data"
+
+          sudo cp "$APP_DIR/deploy/trading-agent.service" /etc/systemd/system/trading-agent.service
+          sudo cp "$APP_DIR/deploy/logrotate.conf" /etc/logrotate.d/trading-agent
+          sudo systemctl daemon-reload
+          sudo systemctl enable trading-agent
 
           if [ ! -f "$APP_DIR/.env" ]; then
             echo ""
@@ -107,7 +120,7 @@ jobs:
           fi
           ENDSSH
 
-      # ── 6. Notify result ───────────────────────────────────────────────
+      # ── 7. Notify result ───────────────────────────────────────────────
       - name: Notify success
         if: success()
         run: |
