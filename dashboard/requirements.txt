@@ -1,0 +1,2 @@
+# Dashboard-only dependencies (run locally, not on the VM)
+streamlit>=1.37.0
