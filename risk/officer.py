@@ -41,20 +41,30 @@ def _reject(signal: Signal, reason: str) -> RiskDecision:
     return RiskDecision(approved=False, signal=signal, rejection_reason=reason)
 
 
-def evaluate(signal: Signal, state: CapitalState | None = None) -> RiskDecision:
+def evaluate(
+    signal: Signal,
+    state: CapitalState | None = None,
+    size_multiplier: float = 1.0,
+) -> RiskDecision:
     """
     Run all risk checks on a Signal and return a RiskDecision.
+
+    `size_multiplier` (0–1] scales the position down for lower-conviction
+    trades; it can never scale risk above the 1%-per-trade ceiling.
 
     Checks (in order):
       1. Circuit breaker — halt if daily loss ≥ 3.5%
       2. Max open positions — halt if already at limit
       3. Stop distance sanity — reject if SL == entry
-      4. Position sizing — 1% capital risk per trade
+      4. Position sizing — 1% capital risk per trade × conviction
       5. Minimum trade value — reject tiny positions
       6. Available cash — reject if not enough liquidity
     """
     if state is None:
         state = get_state()
+    size_multiplier = max(0.0, min(1.0, size_multiplier))
+    if size_multiplier == 0.0:
+        return _reject(signal, "conviction multiplier is zero — no position")
 
     # ── 1. Circuit breaker ─────────────────────────────────────────────────
     if state.is_circuit_tripped:
@@ -76,8 +86,8 @@ def evaluate(signal: Signal, state: CapitalState | None = None) -> RiskDecision:
     if stop_distance <= 0:
         return _reject(signal, "stop distance is zero — malformed signal")
 
-    # ── 4. Position sizing: 1% risk per trade ──────────────────────────────
-    risk_amount = state.total_capital * settings.RISK_PER_TRADE   # e.g. ₹1,000
+    # ── 4. Position sizing: 1% risk per trade, scaled by conviction ────────
+    risk_amount = state.total_capital * settings.RISK_PER_TRADE * size_multiplier
     raw_qty = risk_amount / stop_distance
     quantity = max(1, math.floor(raw_qty))
 

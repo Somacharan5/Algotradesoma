@@ -13,3 +13,4 @@ logs/*
 .idea/
 .vscode/
 data/scrip_master.json
+data/fundamentals_cache.json

@@ -15,11 +15,14 @@ from datetime import datetime, time, timedelta
 import pytz
 from loguru import logger
 
+from analysis.conviction import assess as conviction_assess
+from analysis.regime import assess_regime
 from audit.auditor import (
     enforce_circuit_breaker, end_of_day_summary,
     log_signal, log_risk_decision, log_compliance_decision,
     mark_to_market, rollup_daily_pnl,
 )
+from db.client import db_audit
 from broker.angel import AngelBroker
 from broker.market_data import download_scrip_master
 from compliance.checker import run_all as compliance_check
@@ -132,6 +135,13 @@ async def _run_signal_scan(broker: AngelBroker) -> None:
         logger.info("No signals today.")
         return
 
+    # Market regime is the same for every stock — fetch once per scan
+    regime = await asyncio.to_thread(assess_regime)
+    db_audit("analysis", "market_regime", {
+        "label": regime.label, "score": regime.score,
+        "reasons": regime.reasons, "data": regime.data,
+    })
+
     for sig in signals:
         if _shutdown_event.is_set():
             break
@@ -146,8 +156,15 @@ async def _run_signal_scan(broker: AngelBroker) -> None:
             logger.info(f"Compliance blocked {sig.symbol}: {comp.rejection_reason}")
             continue
 
-        # Risk
-        decision = await asyncio.to_thread(risk_evaluate, sig, state)
+        # Conviction: fundamentals + news + regime on top of the chart setup
+        report = await asyncio.to_thread(conviction_assess, sig, regime)
+        db_audit("analysis", "conviction_assessed", report.as_audit_payload())
+        if report.verdict == "SKIP":
+            logger.info(f"Conviction skipped {sig.symbol}: {report.reasons[-1]}")
+            continue
+
+        # Risk (position scaled by conviction)
+        decision = await asyncio.to_thread(risk_evaluate, sig, state, report.size_multiplier)
         log_risk_decision(sig.symbol, decision.approved, decision.quantity, decision.rejection_reason)
         if not decision.approved:
             logger.info(f"Risk blocked {sig.symbol}: {decision.rejection_reason}")

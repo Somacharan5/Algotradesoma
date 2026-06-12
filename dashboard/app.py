@@ -133,6 +133,22 @@ def _explain(event: dict) -> str | None:
             return f"🛡️ Risk officer approved **{sym}** — position sized at **{p.get('quantity')} shares** to keep potential loss small"
         return f"🛑 Risk officer **rejected {sym}**: {p.get('reason', 'no reason recorded')}"
 
+    if kind == "market_regime":
+        emoji = {"BULLISH": "🌤", "NEUTRAL": "⛅", "BEARISH": "🌧"}.get(p.get("label", ""), "⛅")
+        why = "; ".join(p.get("reasons", [])[:3])
+        return f"{emoji} Market check: **{p.get('label', '?')}** ({p.get('score', 0):.0%} favourable) — {why}"
+
+    if kind == "conviction_assessed":
+        s = p.get("scores", {})
+        detail = (f"chart {s.get('technical', 0):.0%} · company health {s.get('fundamental', 0):.0%} · "
+                  f"news {s.get('news', 0):.0%} · market {s.get('regime', 0):.0%}")
+        why = "; ".join(p.get("reasons", [])[1:4])
+        if p.get("verdict") == "STRONG":
+            return f"💪 High conviction on **{sym}** ({p.get('composite', 0):.0%}) — full position. {detail}. {why}"
+        if p.get("verdict") == "MODERATE":
+            return f"🤔 Moderate conviction on **{sym}** ({p.get('composite', 0):.0%}) — buying a smaller position. {detail}. {why}"
+        return f"🙅 Passed on **{sym}** ({p.get('composite', 0):.0%} conviction) — {why}"
+
     if kind == "circuit_breaker_tripped":
         return (f"⚡ **CIRCUIT BREAKER** — the day's loss hit {p.get('daily_loss_pct')}% "
                 f"(limit {p.get('limit_pct')}%). All positions were closed and trading stopped for the day.")
@@ -276,17 +292,20 @@ running on Oracle Cloud. It currently trades **paper money**
 (₹{settings.PAPER_CAPITAL:,.0f} virtual capital) — no real money is at risk.
 
 **Its daily routine (IST):**
-- **09:20** — scans {len(WATCHLIST)} large NSE stocks for buy signals
+- **09:20** — scans the **Nifty 100** ({len(WATCHLIST)} largest NSE stocks) for buy signals
 - **every 15 min** — re-checks prices on stocks it holds
 - **15:35** — writes the day's report and goes to sleep
 
-**How it decides, in 4 steps:**
-1. **Strategy** spots a pattern (e.g. price trend turning up)
+**How it decides, in 5 steps:**
+1. **Strategy** spots a chart pattern (e.g. price trend turning up)
 2. **Compliance** checks the trade is allowed (market open, stock liquid)
-3. **Risk officer** decides how many shares so a single loss stays small
-4. **Executor** places the trade with a stop-loss and a target
+3. **Conviction** weighs the company's financial health, recent news
+   (Indian + global) and overall market mood — weak cases are dropped,
+   borderline ones get a smaller bet
+4. **Risk officer** sizes the position so a single loss stays small
+5. **Executor** places the trade with a stop-loss and a target
 
-**Watchlist:** {", ".join(WATCHLIST)}
+**Watchlist:** {", ".join(WATCHLIST[:12])}… ({len(WATCHLIST)} stocks total)
 """
     )
     st.divider()

@@ -22,7 +22,7 @@ StandardError=journal
 SyslogIdentifier=trading-agent
 
 # Resource limits (Oracle free tier is tight)
-MemoryMax=512M
+MemoryMax=768M
 CPUQuota=80%
 
 [Install]

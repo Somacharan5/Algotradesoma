@@ -21,6 +21,10 @@ python-telegram-bot>=21.0
 pandas>=2.2.0
 numpy>=1.26.0
 
+# Analysis (fundamentals + news + market regime)
+yfinance>=0.2.40
+feedparser>=6.0.0
+
 # Utilities
 loguru>=0.7.2
 logzero>=1.7.0
