@@ -62,7 +62,7 @@ jobs:
       # the VM are left untouched.
       - name: Sync code
         run: |
-          $SSH $VM_USER@$VM_HOST "mkdir -p $APP_DIR"
+          $SSH $VM_USER@$VM_HOST "mkdir -p $APP_DIR; command -v rsync >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq rsync)"
           rsync -az --delete \
             -e "ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i ~/.ssh/oracle.pem" \
             --exclude '.git' --exclude '.env' --exclude '.venv' \
