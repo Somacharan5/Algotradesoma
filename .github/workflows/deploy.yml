@@ -90,12 +90,14 @@ jobs:
 
           echo "=== Update dependencies ==="
           "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" -q
+          "$VENV/bin/pip" install -r "$APP_DIR/dashboard/requirements.txt" -q
           mkdir -p "$APP_DIR/logs" "$APP_DIR/data"
 
           sudo cp "$APP_DIR/deploy/trading-agent.service" /etc/systemd/system/trading-agent.service
+          sudo cp "$APP_DIR/deploy/trading-dashboard.service" /etc/systemd/system/trading-dashboard.service
           sudo cp "$APP_DIR/deploy/logrotate.conf" /etc/logrotate.d/trading-agent
           sudo systemctl daemon-reload
-          sudo systemctl enable trading-agent
+          sudo systemctl enable trading-agent trading-dashboard
 
           if [ ! -f "$APP_DIR/.env" ]; then
             echo ""
@@ -108,9 +110,14 @@ jobs:
             exit 0
           fi
 
-          echo "=== Restart service ==="
+          echo "=== Restart services ==="
           sudo systemctl restart trading-agent
+          sudo systemctl restart trading-dashboard
           sleep 6
+          if ! systemctl is-active --quiet trading-dashboard; then
+            echo "=== Dashboard FAILED — last 20 log lines ==="
+            journalctl -u trading-dashboard --no-pager -n 20
+          fi
           if systemctl is-active --quiet trading-agent; then
             echo "=== Service is UP ==="
           else
