@@ -99,6 +99,10 @@ jobs:
           sudo systemctl daemon-reload
           sudo systemctl enable trading-agent trading-dashboard
 
+          echo "=== Ensure health-check watchdog cron is installed ==="
+          CRON_LINE="*/5 * * * * $VENV/bin/python $APP_DIR/scripts/health_check.py >> $APP_DIR/logs/health.log 2>&1"
+          ( crontab -l 2>/dev/null | grep -v 'scripts/health_check.py' ; echo "$CRON_LINE" ) | crontab -
+
           if [ ! -f "$APP_DIR/.env" ]; then
             echo ""
             echo "=========================================="

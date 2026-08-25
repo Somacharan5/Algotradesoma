@@ -38,7 +38,20 @@ def _service_active() -> bool:
 
 
 def _recent_log_ok() -> bool:
-    """True if the log file was written to in the last 30 minutes."""
+    """
+    True if the log file was written to in the last 30 minutes.
+
+    Only enforced inside the trading loops' active window (08:45-16:00 IST):
+    outside that window (evenings, nights, weekends, holidays) the agent's
+    scanner/monitor/EOD loops are legitimately silent for hours at a time —
+    checking staleness there would fire a false alarm on every 5-min cron run.
+    """
+    from datetime import time as dtime
+    import pytz
+    now_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
+    if not (dtime(8, 45) <= now_ist.time() <= dtime(16, 0)):
+        return True
+
     log_dir = Path(__file__).resolve().parent.parent / "logs"
     logs = sorted(log_dir.glob("agent_*.log"), reverse=True)
     if not logs:
